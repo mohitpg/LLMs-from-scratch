@@ -23,6 +23,6 @@ for i in range(NUMBER_OF_FILES):
     data = BeautifulSoup(html, 'html.parser') 
     chapters=data.find("div",{"id": "chapters"})
     texts = chapters.findAll(text=True)
-    filename=f'data{i}.txt'
+    filename=f'data/data{i}.txt'
     with open(filename,'w',encoding="utf8") as f:
         f.write(''.join(texts))

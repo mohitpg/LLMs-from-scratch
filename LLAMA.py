@@ -1,7 +1,7 @@
 import math
 import torch
 import torch.nn as nn
-import torchtune.modules as torchmodule
+import torchtune
 from torch.nn import functional as F
 
 class FeedForward(nn.Module):
@@ -11,7 +11,7 @@ class FeedForward(nn.Module):
         self.dropout = dropout
         self.ffn = nn.Sequential(
             nn.Linear(in_features=self.d_model, out_features=self.d_model * 4),
-            nn.ReLU(),
+            nn.SiLU(),
             nn.Linear(in_features=self.d_model * 4, out_features=self.d_model),
             nn.Dropout(dropout),
         )
@@ -28,24 +28,25 @@ class TransformerBlock(nn.Module):
         self.head_size = d_model // num_heads  # head size should be divisible by d_model
         self.num_heads = num_heads
         self.dropout = dropout
-        self.embedding=torchmodule.RotaryPositionalEmbeddings(dim=self.head_size,max_seq_len=self.context_length)
+        self.embedding=torchtune.modules.RotaryPositionalEmbeddings(dim=self.head_size,max_seq_len=self.context_length)
         self.multi_head_attention_layer = nn.MultiheadAttention(d_model, num_heads,batch_first=True)
         self.att_mask=torch.tril(torch.ones((self.context_length,self.context_length)))
         self.att_mask=self.att_mask.masked_fill(self.att_mask==0,float("-inf"))
         self.att_mask=self.att_mask.masked_fill(self.att_mask==1,0)
         self.feed_forward_layer = FeedForward(self.d_model,self.dropout)
-        self.layer_norm_1 = nn.LayerNorm(normalized_shape=self.d_model)
-        self.layer_norm_2 = nn.LayerNorm(normalized_shape=self.d_model)
+        self.rms_norm =torchtune.modules.RMSNorm(self.d_model)
 
     def forward(self, x):
         B,S,D=x.shape
+
+        x=self.rms_norm(x)
         q=k=x.view((B,S,self.num_heads,self.head_size))
         q=self.embedding(q)
         k=self.embedding(k)
         q=q.view((B,S,D))
         k=k.view((B,S,D))
         x , _ = self.multi_head_attention_layer(q,k,x,attn_mask=self.att_mask)
-        x = x + self.feed_forward_layer(self.layer_norm_2(x))  # Residual connection
+        x = x + self.feed_forward_layer(self.rms_norm(x))  
         return x
     
 class TransformerLanguageModel(nn.Module):
@@ -65,7 +66,7 @@ class TransformerLanguageModel(nn.Module):
         # Different from original paper, here we add a final layer norm after all the blocks
         self.transformer_blocks = nn.Sequential(*(
                 [TransformerBlock(self.d_model,self.context_length,self.num_heads,self.dropout) for _ in range(self.num_blocks)] +
-                [nn.LayerNorm(self.d_model)]
+                [torchtune.modules.RMSNorm(self.d_model)]
         ))
         self.language_model_out_linear_layer = nn.Linear(in_features=self.d_model, out_features=self.max_token_value)
 

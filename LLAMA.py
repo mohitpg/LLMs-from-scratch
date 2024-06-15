@@ -1,6 +1,7 @@
 import math
 import torch
 import torch.nn as nn
+import torchtune.modules as torchmodule
 from torch.nn import functional as F
 
 class FeedForward(nn.Module):
@@ -27,15 +28,26 @@ class TransformerBlock(nn.Module):
         self.head_size = d_model // num_heads  # head size should be divisible by d_model
         self.num_heads = num_heads
         self.dropout = dropout
+        self.embedding=torchmodule.RotaryPositionalEmbeddings(dim=self.head_size,max_seq_len=self.context_length)
         self.multi_head_attention_layer = nn.MultiheadAttention(d_model, num_heads,batch_first=True)
+        self.att_mask=torch.tril(torch.ones((self.context_length,self.context_length)))
+        self.att_mask=self.att_mask.masked_fill(self.att_mask==0,float("-inf"))
+        self.att_mask=self.att_mask.masked_fill(self.att_mask==1,0)
         self.feed_forward_layer = FeedForward(self.d_model,self.dropout)
         self.layer_norm_1 = nn.LayerNorm(normalized_shape=self.d_model)
         self.layer_norm_2 = nn.LayerNorm(normalized_shape=self.d_model)
 
     def forward(self, x):
-        x , _ = self.multi_head_attention_layer(x,x,x)
+        B,S,D=x.shape
+        q=k=x.view((B,S,self.num_heads,self.head_size))
+        q=self.embedding(q)
+        k=self.embedding(k)
+        q=q.view((B,S,D))
+        k=k.view((B,S,D))
+        x , _ = self.multi_head_attention_layer(q,k,x,attn_mask=self.att_mask)
         x = x + self.feed_forward_layer(self.layer_norm_2(x))  # Residual connection
         return x
+    
 class TransformerLanguageModel(nn.Module):
     def __init__(self,d_model,context_length,num_heads,num_blocks,dropout,max_token_value):
         super().__init__()
@@ -59,18 +71,7 @@ class TransformerLanguageModel(nn.Module):
 
     def forward(self, idx, targets=None):
         B, T = idx.shape
-        """
-        # Set up position embedding look-up table
-        # following the same approach as the original Transformer paper (Sine and Cosine functions)
-        """
-        position_encoding_lookup_table = torch.zeros(self.context_length, self.d_model)
-        position = torch.arange(0, self.context_length, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, self.d_model, 2).float() * (-math.log(10000.0) / self.d_model))
-        position_encoding_lookup_table[:, 0::2] = torch.sin(position * div_term)
-        position_encoding_lookup_table[:, 1::2] = torch.cos(position * div_term)
-        # change position_encoding_lookup_table from (context_length, d_model) to (T, d_model)
-        position_embedding = position_encoding_lookup_table[:T, :].to(self.device)
-        x = self.token_embedding_lookup_table(idx) + position_embedding
+        x = self.token_embedding_lookup_table(idx)
         x = self.transformer_blocks(x)
         # The "logits" are the output values of our model before applying softmax
         logits = self.language_model_out_linear_layer(x)

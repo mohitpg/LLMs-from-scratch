@@ -28,15 +28,18 @@ class TransformerBlock(nn.Module):
         self.num_heads = num_heads
         self.dropout = dropout
         self.multi_head_attention_layer = nn.MultiheadAttention(d_model, num_heads,batch_first=True)
-        self.feed_forward_layer = FeedForward()
+        self.att_mask=torch.tril(torch.ones((self.context_length,self.context_length)))
+        self.att_mask=self.att_mask.masked_fill(self.att_mask==0,float("-inf"))
+        self.att_mask=self.att_mask.masked_fill(self.att_mask==1,0)
+        self.feed_forward_layer = FeedForward(self.d_model,self.dropout)
         self.layer_norm_1 = nn.LayerNorm(normalized_shape=self.d_model)
         self.layer_norm_2 = nn.LayerNorm(normalized_shape=self.d_model)
 
     def forward(self, x):
-        x , _ = self.multi_head_attention_layer(x,x,x)
-        #x = x + self.multi_head_attention_layer(self.layer_norm_1(x))  # Residual connection
+        x , _ = self.multi_head_attention_layer(x,x,x,att_mask=self.att_mask)
         x = x + self.feed_forward_layer(self.layer_norm_2(x))  # Residual connection
         return x
+    
 class TransformerLanguageModel(nn.Module):
     def __init__(self,d_model,context_length,num_heads,num_blocks,dropout,max_token_value):
         super().__init__()
@@ -53,7 +56,7 @@ class TransformerLanguageModel(nn.Module):
         # Run all the transformer blocks
         # Different from original paper, here we add a final layer norm after all the blocks
         self.transformer_blocks = nn.Sequential(*(
-                [TransformerBlock(num_heads=self.num_heads) for _ in range(self.num_blocks)] +
+                [TransformerBlock(self.d_model,self.context_length,self.num_heads,self.dropout) for _ in range(self.num_blocks)] +
                 [nn.LayerNorm(self.d_model)]
         ))
         self.language_model_out_linear_layer = nn.Linear(in_features=self.d_model, out_features=self.max_token_value)

@@ -14,59 +14,73 @@ class FeedForward(nn.Module):
             nn.Linear(in_features=self.d_model * 4, out_features=self.d_model),
             nn.Dropout(dropout),
         )
-
     def forward(self, x):
         return self.ffn(x)
 
-class TransformerBlock(nn.Module):
-
+class GPTBlock(nn.Module):
     def __init__(self,d_model,context_length,num_heads,dropout):
         super().__init__()
+        self.device='cuda' if torch.cuda.is_available() else 'cpu'
         self.d_model = d_model
         self.context_length = context_length
-        self.head_size = d_model // num_heads  # head size should be divisible by d_model
+        self.head_size = d_model // num_heads
         self.num_heads = num_heads
         self.dropout = dropout
         self.multi_head_attention_layer = nn.MultiheadAttention(d_model, num_heads,batch_first=True)
-        self.att_mask=torch.tril(torch.ones((self.context_length,self.context_length)))
-        self.att_mask=self.att_mask.masked_fill(self.att_mask==0,float("-inf"))
-        self.att_mask=self.att_mask.masked_fill(self.att_mask==1,0)
+        self.att_mask=torch.ones((self.context_length,self.context_length),dtype=torch.bool).to(self.device)
         self.feed_forward_layer = FeedForward(self.d_model,self.dropout)
         self.layer_norm_1 = nn.LayerNorm(normalized_shape=self.d_model)
-        self.layer_norm_2 = nn.LayerNorm(normalized_shape=self.d_model)
 
     def forward(self, x):
-        x , _ = self.multi_head_attention_layer(x,x,x,att_mask=self.att_mask)
-        x = x + self.feed_forward_layer(self.layer_norm_2(x))  # Residual connection
+        B,T,E=x.shape
+        self.attn_mask=torch.triu(self.att_mask[:T,:T],diagonal=1)
+        x = x + self.multi_head_attention_layer(x,x,x,attn_mask=self.attn_mask,need_weights=False,is_causal=True)
+        x = x + self.feed_forward_layer(self.layer_norm_1(x)) 
         return x
     
-class TransformerLanguageModel(nn.Module):
-    def __init__(self,d_model,context_length,num_heads,num_blocks,dropout,max_token_value):
+class GPT(nn.Module):
+    def __init__(self,d_model: int,context_length: int,num_heads: int,num_blocks: int,embedding_table,dropout=0.0):
+        '''
+        Instantiates the GPT model
+
+        Input Arguments:
+
+        d_model :int -> Embedding size of the model
+        context_length :int -> Context length of the model
+        num_heads :int -> Number of heads in Multihead attention
+        num_blocks :int -> Number of transformer blocks
+        embedding_table :nn.Embedding -> Embedding table
+        dropout :float -> Dropout value (default value 0.0)
+        
+        Output:
+
+        Tensor of the shape [Batch size,Context length,Number of embeddings]
+        
+        '''
         super().__init__()
         self.device='cuda' if torch.cuda.is_available() else 'cpu'
+        assert isinstance(embedding_table,nn.Embedding)
+        assert embedding_table.weight.shape[1]==d_model
+
         self.d_model = d_model
         self.context_length = context_length
         self.num_heads = num_heads
         self.num_blocks = num_blocks
         self.dropout = dropout
-        self.max_token_value = max_token_value
-        # Set up token embedding look-up table
-        self.token_embedding_lookup_table = nn.Embedding(num_embeddings=self.max_token_value + 1, embedding_dim=self.d_model)
-
+        self.token_embedding_lookup_table=embedding_table
+        self.max_token_value=self.token_embedding_lookup_table.weight.shape[0]-1
+        
         # Run all the transformer blocks
         # Different from original paper, here we add a final layer norm after all the blocks
         self.transformer_blocks = nn.Sequential(*(
-                [TransformerBlock(self.d_model,self.context_length,self.num_heads,self.dropout) for _ in range(self.num_blocks)] +
+                [GPTBlock(self.d_model,self.context_length,self.num_heads,self.dropout) for _ in range(self.num_blocks)] +
                 [nn.LayerNorm(self.d_model)]
         ))
         self.language_model_out_linear_layer = nn.Linear(in_features=self.d_model, out_features=self.max_token_value)
 
     def forward(self, idx, targets=None):
         B, T = idx.shape
-        """
-        # Set up position embedding look-up table
-        # following the same approach as the original Transformer paper (Sine and Cosine functions)
-        """
+
         position_encoding_lookup_table = torch.zeros(self.context_length, self.d_model)
         position = torch.arange(0, self.context_length, dtype=torch.float).unsqueeze(1)
         div_term = torch.exp(torch.arange(0, self.d_model, 2).float() * (-math.log(10000.0) / self.d_model))

@@ -1,19 +1,19 @@
 # LLMs from scratch
-This is an implementation of the GPT and LLAMA models from scratch using pytorch(and torchtune) .It is an extension of Wayland Zhangs' **[excellent repo](https://github.com/waylandzhang/Transformer-from-scratch)** with more modular components and adjustable parameters. <br/>
-I trained the model on google colab although it works pretty well on a cpu too. Uses nn.Multiheadattention for fast multi head attention and huggingface tokenizers for BPE encoding. Also provided the code for scraping data using bs4.
+This is an implementation of the GPT and LLAMA models from scratch using pytorch(and torchtune) . It is an extension of Wayland Zhangs' **[excellent repo](https://github.com/waylandzhang/Transformer-from-scratch)** with more modular components and adjustable parameters. Both the models can be imported from GPT.py and LLAMA.py using a single line of code!<br/>
+Uses nn.Multiheadattention for fast multi head attention and huggingface tokenizers for BPE encoding. I trained the model on google colab although it works pretty well on a cpu too. Also provided the code for scraping data using bs4.
 
 # Installation
 1. Install requirements
    ```
    pip install requirements.txt
    ```
-2. Run `datascrape.py`
+2. Run `datascrape.py` 
 
-3. Train the model and save it by running `train.ipynb`
+3. Train the model and save it by running `train.ipynb`. Change parameters and models as necessary.
 
 4. Generate using `generate.ipynb`
    
-Sample text
+Sample output
    ```
    Harry you I over Remus says , over was list . grumbled el bite of to . inwardly up , looked He al a Coul in Poppy people ’ to We Weasley goes Tina Sirius . ? to Hey to let date let quickly worried soon , I , , told - same below corridor much about and . back that think . He didn eyes fl to ll to the when cared there everyone since of James least there I straight . scram reading to didn Lucius , lot journey made you be ' He there , feel .
    ```

@@ -1,2 +1,4 @@
 __pycache__
 /data/*
+*.pt
+custom_tokenizer.json

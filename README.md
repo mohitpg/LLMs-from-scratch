@@ -1,8 +1,16 @@
 # LLMs from scratch
 This is an implementation of the GPT and LLAMA models from scratch using pytorch(and torchtune) . It is an extension of Wayland Zhangs' **[excellent repo](https://github.com/waylandzhang/Transformer-from-scratch)** with more modular components and adjustable parameters. Both the models can be imported from GPT.py and LLAMA.py using a single line of code!<br/>
-Uses nn.Multiheadattention for fast multi head attention and huggingface tokenizers for BPE encoding. I trained the model on google colab although it works pretty well on a cpu too. Also provided the code for scraping data using bs4.
+Uses nn.Multiheadattention for fast multi head attention and huggingface tokenizers for BPE encoding. I trained the model on google colab although it works pretty well on a cpu too. Also provided the code for scraping data using bs4.<br/>
+### Update
+Created a **[library](https://pypi.org/project/llmcollection/)** for directly accessing the models!<br/>
+Run
+```
+pip install llmcollection
+```
+and import using `from llmcollection import MODELNAME`<br/>
 
 # Installation
+
 1. Install requirements
    ```
    pip install requirements.txt

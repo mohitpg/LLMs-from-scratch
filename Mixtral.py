@@ -145,14 +145,16 @@ class MixtralBlock(nn.Module):
 
     def forward(self, x):
         B,T,D=x.shape
-        self.attn_mask=torch.triu(self.att_mask[:T,:T],diagonal=1)
+        attn_mask1=torch.triu(self.att_mask[:T,:T],diagonal=1)
+        attn_mask2=torch.tril(self.att_mask[:T,:T],diagonal=-T//2)
+        attn_mask=torch.logical_or(attn_mask1,attn_mask2)
         x=self.rms_norm(x)
         q=k=x.view((B,T,self.num_heads,self.head_size))
         q=self.embedding(q)
         k=self.embedding(k)
         q=q.view((B,T,D))
         k=k.view((B,T,D))
-        x = self.multi_head_attention_layer(q,k,x,attn_mask=self.attn_mask,need_weights=False,is_causal=True)[0]
+        x = self.multi_head_attention_layer(q,k,x,attn_mask=attn_mask,need_weights=False,is_causal=True)[0]
         x = x + self.feed_forward_layer(self.rms_norm(x))  
         return x
     

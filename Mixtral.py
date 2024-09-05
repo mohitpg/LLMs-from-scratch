@@ -36,8 +36,70 @@ class FeedForward(nn.Module):
 
     def forward(self, x):
         return self.ffn(x)
+    
+class MOEFeedForward(nn.Module):
+    '''
+        Initializes Mixture of Experts FFN Layer
 
-class LLAMABlock(nn.Module):
+        Args:
+
+        d_model :int -> Embedding size of the model
+        num_experts :int -> Number of experts in MOE FFN
+        dropout :float -> Dropout value
+        top_k -> Number of experts to be considered(Default 2)
+
+        Input:
+
+        Tensor of the shape [Batch size,Sequence Length,Embedding dimension]
+
+        Output:
+
+        Tensor of the shape [Batch size,Sequence Length,Embedding dimension]        
+
+    '''
+    def __init__(self,d_model,num_experts,dropout,top_k=2):
+        super().__init__()
+        self.d_model = d_model
+        self.num_experts = num_experts
+        self.dropout = dropout
+        self.top_k = top_k
+
+        self.experts = nn.ModuleList([FeedForward(self.d_model,self.dropout) for _ in range(self.num_experts)])
+        self.router = nn.Linear(self.d_model, self.num_experts)
+
+    def forward(self,x):
+        logits = self.router(x)
+        top_k_logits, indices = logits.topk(self.top_k, dim=-1)
+        zeros = torch.full_like(logits, float('-inf'))
+        sparse_logits = zeros.scatter(-1, indices, top_k_logits)
+
+        gating_output = F.softmax(sparse_logits, dim=-1)
+        final_output = torch.zeros_like(x)
+
+        flat_x = x.reshape(-1, x.size(-1))
+        gating_output_flat = gating_output.reshape(-1, gating_output.size(-1))
+
+        # Process each expert in parallel
+        for i, expert in enumerate(self.experts):
+            # Create a mask for the inputs where the current expert is in top-k
+            expert_mask = (indices == i).any(dim=-1)
+            flat_mask = expert_mask.view(-1)
+
+            if flat_mask.any():
+                expert_input = flat_x[flat_mask]
+                expert_output = expert(expert_input)
+
+                # Extract and apply gating scores
+                gating_scores = gating_output_flat[flat_mask, i].unsqueeze(1)
+                weighted_output = expert_output * gating_scores
+
+                # Update final output additively by indexing and adding
+                final_output[expert_mask] += weighted_output.squeeze(1)
+
+        return final_output
+
+
+class MixtralBlock(nn.Module):
     '''
         Initializes the transformer block of the model
 
@@ -46,6 +108,7 @@ class LLAMABlock(nn.Module):
         d_model :int -> Embedding size of the model
         context_length :int -> Context length of the model
         num_heads :int -> Number of heads in Multihead attention
+        num_experts :int -> Number of experts in MOE FFN
         dropout :float -> Dropout value
 
         Input:
@@ -64,19 +127,20 @@ class LLAMABlock(nn.Module):
 
         Tensor of the shape [Batch size,Sequence Length,Embedding dimension]
     '''
-    def __init__(self,d_model,context_length,num_heads,dropout):
+    def __init__(self,d_model,context_length,num_heads,num_experts,dropout):
         super().__init__()
         self.device='cuda' if torch.cuda.is_available() else 'cpu'
         self.d_model = d_model
         self.context_length = context_length
         self.head_size = d_model // num_heads
         self.num_heads = num_heads
+        self.num_experts = num_experts
         self.dropout = dropout
 
         self.embedding=torchtune.modules.RotaryPositionalEmbeddings(dim=self.head_size,max_seq_len=self.context_length)
         self.multi_head_attention_layer = nn.MultiheadAttention(d_model, num_heads,batch_first=True)
         self.att_mask=torch.ones((self.context_length,self.context_length),dtype=torch.bool).to(self.device)
-        self.feed_forward_layer = FeedForward(self.d_model,self.dropout)
+        self.feed_forward_layer = MOEFeedForward(self.d_model,self.num_experts,self.dropout)
         self.rms_norm =torchtune.modules.RMSNorm(self.d_model)
 
     def forward(self, x):
@@ -92,9 +156,9 @@ class LLAMABlock(nn.Module):
         x = x + self.feed_forward_layer(self.rms_norm(x))  
         return x
     
-class LLAMA(nn.Module):
+class Mixtral(nn.Module):
     '''
-        Instantiates the LLAMA model
+        Instantiates the Mixtral model
 
         Input Arguments:
 
@@ -102,6 +166,7 @@ class LLAMA(nn.Module):
         context_length :int -> Context length of the model
         num_heads :int -> Number of heads in Multihead attention
         num_blocks :int -> Number of transformer blocks
+        num_experts :int -> Number of experts in MOE FFN
         embedding_table :nn.Embedding -> Embedding table
         dropout :float -> Dropout value (default value 0.0)
         
@@ -111,7 +176,7 @@ class LLAMA(nn.Module):
         
         '''
     
-    def __init__(self,d_model: int,context_length: int,num_heads: int,num_blocks: int,embedding_table,dropout=0.0):
+    def __init__(self,d_model: int,context_length: int,num_heads: int,num_blocks: int,num_experts: int,embedding_table,dropout=0.0):
         super().__init__()
         
         assert isinstance(embedding_table,nn.Embedding)
@@ -122,12 +187,13 @@ class LLAMA(nn.Module):
         self.context_length = context_length
         self.num_heads = num_heads
         self.num_blocks = num_blocks
+        self.num_experts = num_experts
         self.dropout = dropout
         self.token_embedding_lookup_table=embedding_table
         self.max_token_value=self.token_embedding_lookup_table.weight.shape[0]-1
 
         self.transformer_blocks = nn.Sequential(*(
-                [LLAMABlock(self.d_model,self.context_length,self.num_heads,self.dropout) for _ in range(self.num_blocks)] +
+                [MixtralBlock(self.d_model,self.context_length,self.num_heads,self.num_experts,self.dropout) for _ in range(self.num_blocks)] +
                 [torchtune.modules.RMSNorm(self.d_model)] #Added RMSNorm for stability
         ))
         self.language_model_out_linear_layer = nn.Linear(in_features=self.d_model, out_features=self.max_token_value)
